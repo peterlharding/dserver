@@ -1,0 +1,9 @@
+# Audit and log files
+
+tmp
+
+# Data files
+
+*.dat
+
+

@@ -1,0 +1,15 @@
+# Contains a set of sequences keyed by AU Capital City
+#
+# Test with:
+#
+# $ bin/tst.py -t Perth -n
+#
+
+Adelaide:1
+Brisbane:1
+Canberra:1
+Darwin:1
+Hobart:1
+Melbourne:1
+Sydney:1
+Perth:1

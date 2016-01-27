@@ -1,0 +1,152 @@
+#---------------------------------------------------------------------
+
+def usage():
+   print __doc__
+
+#---------------------------------------------------------------------
+
+def main(argv):
+   global debug_level
+   global term_flg
+   global verbose_flg
+   global index
+   global key
+   global store_flg
+   global store_data
+   global HOST
+   global PORT
+   global ds_dir
+   global data_dir
+
+   no                = 1
+   host              = None
+   port              = None
+   source_name       = None
+
+   store_flg = False
+
+   try:
+      opts, args = getopt.getopt(argv, "dD:hH:i:I:k:n:P:s:S:t:Tw:vV?")
+   except getopt.error, msg:
+      usage()
+      return 1
+
+   for o, a in opts:
+      if o == '-d':
+         debug_level     += 1
+      elif o == '-D':
+         debug_level      = int(a)
+      elif o == '-H':
+         host             = a
+      elif o == '-i':            # Assuming a numeric offset!
+         index            = a
+      elif o == '-I':            # Assuming a string index! (i.e. a hash!)
+         hashed           = True
+         hash_key         = a
+      elif o == '-k':
+         key              = a
+      elif o == '-n':
+         no               = int(a)
+      elif o == '-P':
+         port             = int(a)
+      elif o == '-s':
+         source_name      = a
+      elif o == '-S':
+         print "storing..."
+         store_flg        = True
+         store_data       = a
+      elif o == '-t':           # Deprecated term 'table'
+         source_name      = a
+      elif o == '-T':
+         term_flg         = True
+      elif o == '-v':
+         verbose_flg      = True
+      elif o == '-V':
+         print "Version: %s" % __version__
+         return 0
+      elif o == '-w':
+         ds_dir           = a
+      elif o in ('-h', '-?'):
+         usage()
+         return 0
+
+   wrk_path  = os.getcwd()
+   wrk_dir   = os.path.basename(wrk_path)
+
+   if not ds_dir:
+      try:
+         ds_dir = os.environ["DSERVER_DIR"]
+      except KeyError, e:
+         print "No DSERVER_DIR environment variable set!"
+         print "Attempting to use local DATA directory..."
+
+         ds_dir = wrk_path
+
+   data_dir = ds_dir + '/DATA/'
+
+   if not os.path.exists(data_dir):
+      print "Data directory (%s) does not exist!" % data_dir
+      return 1
+
+   os.chdir(data_dir)
+
+   read_config()
+
+   if host:
+      HOST = host
+
+   if port:
+      PORT = port
+
+   print
+   print "Testing data-server at %s:%s" % (HOST, PORT)
+   print
+
+   if not sources.has_key(source_name):
+      if not source_name:
+         print "Specify source..."
+      else:
+         print "No source, '%s'..." % source_name
+
+      print
+
+      print "Valid sources are:\n"
+      print "  Name                   Type"
+      print "  ====                   ===="
+
+      for key in sources.keys():
+         print "  %s" % sources[key]
+
+      print
+      return 0
+
+   if store_flg:                       # STORE
+      store(source_name, store_data)
+   else:                               # GET
+      for i in range(no):
+         get(source_name)
+
+#---------------------------------------------------------------------
+
+if __name__ == '__main__' or __name__ == sys.argv[0]:
+   sys.exit(main(sys.argv[1:]))
+
+#---------------------------------------------------------------------
+
+"""
+Revision History:
+
+     Date     Who   Description
+   --------   ---   --------------------------------------------------
+   20031014   plh   Initial implementation
+   20080716   plh   Merged in 2.1 code variants
+   20090130   plh   Read config file to get port and other definitions 
+   20090206   plh   Restructured start up logic
+
+Problems to fix:
+
+To Do:
+
+Issues:
+
+"""

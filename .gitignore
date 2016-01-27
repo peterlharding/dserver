@@ -57,3 +57,17 @@ docs/_build/
 
 # PyBuilder
 target/
+
+
+# dserver stuff
+
+dserver.ini
+
+*.bak
+*.log
+*.lnk
+*.pid
+*.tmp
+*.used
+*.store
+

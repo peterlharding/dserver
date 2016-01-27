@@ -1,0 +1,26 @@
+
+#----- Example Data Server configuration file ----------------------------------
+
+[Config]
+Port=9578
+Environment=TST
+
+#-------------------------------------------------------------------------------
+
+[Data]
+Description=VUserIdx:Indexer:{'start':0}
+Description=RunNo:Counter:
+Description=Globals:Hashed:
+Description=Profiles:Indexed:
+Description=SerialNo:Sequence:
+Description=Sequence:Sequence:,
+Description=Indexed:Indexed:,
+Description=Keyed:Keyed:,
+Description=KeyedSequence:KeyedSequence:
+Description=Hashed:Hashed:,
+Description=Store:CSV:|
+Description=Test:Indexed:
+
+
+#-------------------------------------------------------------------------------
+
