@@ -5,7 +5,7 @@
 #
 #                Mobile:  0418 375 085
 #
-#          Copyright (C) 1994-2010, Peter Harding
+#          Copyright (C) 1994-2011, Peter Harding
 #                        All rights reserved
 #
 #--------------------------------------------------------------------------
@@ -80,7 +80,7 @@ from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 #--------------------------------------------------------------------------
 
-__id__            = "@(#)  dshttpd.py  [2.1.2]  2010-07-14"
+__id__            = "@(#)  dshttpd.py  [2.2.0]  2011-06-30"
 __version__       = re.search(r'.*\[([^\]]*)\].*', __id__).group(1)
 __all__           = ["RequestHandler"]
 
@@ -94,7 +94,7 @@ wait_flg          = False
 debug_level       = 0
 
 HOST              = ''             #  Host server - '' means localhost
-PORT              = 8000           #  Listen on a standard HTTP port number
+PORT              = 8000           #  Listen on a non-reserved port number
 ENVIRONMENT       = 'SVT'
 
 data_dir          = None
@@ -108,13 +108,13 @@ LOGFILE           = "dserver.log"
 PIDFILE           = "dserver.pid"
 
 INVALID           = 'INVALID'
-DELIMITER         = 'delimiter'
-TAG_DELIMITER     = 'tag_delimiter'
 
-p_args            = re.compile(r'([^\?]*)\?(.*)')
 p_comment         = re.compile('^#')
+p_args            = re.compile(r'([^\?]*)\?(.*)')
 
-#--------------------------------------------------------------------------
+barcode_factors   = (8, 6, 4, 2, 3, 5, 9, 7)
+
+#==========================================================================
 
 class RequestHandler(BaseHTTPRequestHandler):
 
@@ -131,7 +131,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     server_version = "SimpleHTTP/" + __version__
 
-    #-------------------------------------------------------------------------------------_
+    #-----------------------------------------------------------------------
 
     def do_GET(self):
         INFO('Host (%s) - Connected at %s' % (self.client_address[0], datetime.now()))
@@ -140,7 +140,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if self.path == '/':  self.path = 'index.html'
 
-        print "[%s]" % self.path
+        # print "[do_GET]  self.path [%s]" % self.path
 
         if self.client_address[0] == '10.3.7.214':
             print ">>>> %s <<<<" % self.path
@@ -155,7 +155,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 (k, v)   = grp.split('=')
                 args[k]  = v
         
-            print "[%s]" % args
+            # print "[do_GET]  args [%s]" % args
         else:
             args = None
 
@@ -164,47 +164,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         if f:
             self.wfile.write(f)
 
-    #-------------------------------------------------------------------------------------_
-
-    def do_POST(self):
-        """Serve a POST request."""
-        INFO('Host (%s) - Connected at %s' % (self.client_address[0], datetime.now()))
-
-        length = int(self.headers.getheader('content-length'))        
-
-        data_string = self.rfile.read(length)
-
-        print "[%s|%s]" % (self.path, data_string)
-
-        m = p_args.search(self.path)
-
-        if m:
-            self.path = m.group(1)
-            args =  {}
-            for grp in m.group(2).split(r'&'):
-                (k, v)   = grp.split('=')
-                args[k]  = v
-
-            print "args: [%s]" % args
-
-            msg = urllib.unquote(args['msg'])
-            msg += "|" + data_string
-            reply = process(msg)
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.send_header("Content-Length", str(len(reply)))
-            self.end_headers()
-        else:
-            args = None
-            self.send_response(404)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-
-            reply = 'Unknown action'
-
-        self.wfile.write(reply)
-
-    #-------------------------------------------------------------------------------------_
+    #-----------------------------------------------------------------------
 
     def do_HEAD(self):
         """Serve a HEAD request."""
@@ -213,17 +173,25 @@ class RequestHandler(BaseHTTPRequestHandler):
         if f:
             f.close()
 
-    #-------------------------------------------------------------------------------------_
+    #-----------------------------------------------------------------------
 
     def setup_headers(self, args):
         if args:
-            try:
+            if debug_level > 2:
                 msg = args['msg']
-                msg = urllib.unquote(msg)
-                reply = process(msg)
-            except:
-                print "No message -> Args: [%s]" % args
-                reply = ""
+                query = urllib.unquote(msg)
+                reply = process(query)
+            else:
+                try:
+                    msg = args['msg']
+                    query = urllib.unquote(msg)
+                    reply = process(query)
+                except:
+                    ERROR("[dserver::setup_headers]  Exception processing query '%s' args [%s]" % (query, args))
+                    print "Exception processing message from args: [%s]" % args
+                    reply = "*ERROR*"
+
+            # print "[setup_headers]  ==> Reply [%s]" % reply
 
             self.send_response(200)
             self.send_header("Content-type", "text/html")
@@ -281,25 +249,55 @@ class Group:
     Name     = None
     Idx      = None
     Data     = None
+    Comments = None
 
     def __init__(self, name):
         self.Name       = name
         self.Idx        = 0
         self.Data       = []
-        self.comments   = []
+        self.Comments   = []
 
     def __str__(self):
         s = "Grp %s  Len %d" % (self.Name, len(self.Data))
         return s
 
-    def append(self, s):
+    def append_comments(self, s):
+        self.Comments.append(s)
+
+    def append_data(self, s):
         self.Data.append(s)
 
-    def set(self):
+    def set_idx(self):
         if len(self.Data) > 0:
             self.Idx  = 0
         else:
             self.Idx  = -1
+
+#--------------------------------------------------------------------------
+
+class BarcodeGroup(Group):
+    Prefix     = 'AA'
+    Range      = 99
+    Country    = 'AU'
+
+    #-----------------------------------------------------------------------
+
+    def __init__(self, name):
+        (prefix, range, country) = name.split('-')
+
+        self.Name       = name
+        self.Prefix     = prefix
+        self.Range      = int(range)
+        self.Country    = country
+        self.Serial     = None
+
+    #-----------------------------------------------------------------------
+
+    def __str__(self):
+        s = "Grp %s  Serial %d" % (self.Name, self.Serial)
+        return s
+
+    #-----------------------------------------------------------------------
 
 #--------------------------------------------------------------------------
 
@@ -318,7 +316,7 @@ class Source:
         self.File        = "%s/%s.dat" % (environment, name)
         self.Used        = "%s/tmp/%s.used" % (environment, name)
         self.Stored      = "%s/tmp/%s.stored" % (environment, name)
-        self.comments    = []
+        self.Comments    = []
 
         # sys.stderr.write("Loading %s\n" % self.Name)
         # sys.stderr.flush()
@@ -335,8 +333,8 @@ class Source:
 
         if delimiter:
             self.Delimiter  = delimiter
-        elif attributes.has_key(DELIMITER):
-            self.Delimiter  = attributes[DELIMITER]
+        elif attributes.has_key('Delimiter'):
+            self.Delimiter  = attributes['Delimiter']
         else:
             self.Delimiter  = ','
 
@@ -348,11 +346,18 @@ class Source:
         elif self.Type == "Sequence":
             rc = self.init_sequence()
 
-        elif self.Type == "Hashed":
-            if attributes.has_key(TAG_DELIMITER):
-                self.tag_delimiter  = attributes[TAG_DELIMITER]
+        elif self.Type == "KeyedSequence":
+            if attributes.has_key('TagDelimiter'):
+                self.TagDelimiter  = attributes['TagDelimiter']
             else:
-                self.tag_delimiter  = ':'
+                self.TagDelimiter  = ':'
+            rc = self.init_keyed_sequence()
+
+        elif self.Type == "Hashed":
+            if attributes.has_key('TagDelimiter'):
+                self.TagDelimiter  = attributes['TagDelimiter']
+            else:
+                self.TagDelimiter  = ':'
             rc = self.init_hashed()
 
         elif self.Type == "Indexed":
@@ -366,10 +371,17 @@ class Source:
                 self.Data = attributes['start']
             else:
                 self.Data = 1
-            rc = 1
+            rc = True
 
         elif self.Type == "Counter":
             rc = self.init_counter()
+
+        elif self.Type == "Barcodes":
+            if attributes.has_key('TagDelimiter'):
+                self.TagDelimiter  = attributes['TagDelimiter']
+            else:
+                self.TagDelimiter  = ':'
+            rc = self.init_barcodes()
 
         if rc:
             self.Valid = True
@@ -379,10 +391,10 @@ class Source:
 
         self.Size        = rc
         self.Attributes  = {
-                                  'Type'       : self.Type,
-                                  'Delimiter'  : self.Delimiter,
-                                  'Size'       : rc
-                               }
+                               'Type'       : self.Type,
+                               'Delimiter'  : self.Delimiter,
+                               'Size'       : rc
+                           }
 
         try:
             self.ufh = open(self.Used, 'a+')
@@ -407,8 +419,8 @@ class Source:
                 s += " %9d rows" % len(self.Data)
             elif self.Type == "Sequence":
                 s += " Starting value:  %d" % self.Data
-            elif self.Type == "Indexer":
-                s += " Starting value:  %d" % self.Data
+            elif self.Type == "KeyedSequence":
+                s += " %9d groups" % len(self.Data)
             elif self.Type == "Hashed":
                 s += " %9d rows"   % len(self.Data)
             elif self.Type == "Indexed":
@@ -419,6 +431,8 @@ class Source:
                 s += " Starting value:  %d" % self.Data
             elif self.Type == "Counter":
                 s += " Value:  %d" % self.Data
+            elif self.Type == "Barcodes":
+                s += " %9d groups" % len(self.Data)
         else:
             s += "   "
 
@@ -443,7 +457,7 @@ class Source:
             line = line.strip()
 
             if p_comment.match(line):
-                self.comments.append(line)
+                self.Comments.append(line)
                 continue
 
             self.Data.append(line)
@@ -455,9 +469,9 @@ class Source:
         else:
             self.Idx = None
 
-        # INFO("Read in %d CSV rows - %s" % (len(self.Data), self.Name))
-
-        if debug_level > 2: print "Read in %d CSV rows - %s" % (len(self.Data), self.Name)
+        if debug_level > 2:
+            INFO("Read in %d CSV rows - %s" % (len(self.Data), self.Name))
+            if verbose_flg:  print "Read in %d CSV rows - %s" % (len(self.Data), self.Name)
 
         #return len(self.Data)
         return True
@@ -479,7 +493,7 @@ class Source:
             line = line.strip()
 
             if p_comment.match(line):
-                self.comments.append(line)
+                self.Comments.append(line)
                 continue
 
             elif (len(line) == 0):
@@ -493,6 +507,49 @@ class Source:
             self.Data = no
 
         f.close()
+
+        return True
+
+    #-----------------------------------------------------------------------
+
+    def init_keyed_sequence(self):
+        try:
+            f = open(self.File, 'r')
+        except IOError, e:
+            sys.stderr.write('[dserver]  Open failed: %s\n' % str(e))
+            sys.exit(1)
+
+        groupName  = None
+        group      = None
+
+        self.Data  = {}
+
+        while True:
+            line = f.readline()
+
+            if not line: break
+
+            line = line.strip()
+
+            if p_comment.match(line):
+                self.Comments.append(line)
+                continue
+
+            elif (len(line) == 0):
+                continue
+
+            else:
+                (tag, serial_no) = line.split(self.TagDelimiter)
+
+                tag = tag.strip()
+
+                self.Data[tag] = int(serial_no)
+
+        f.close()
+
+        if debug_level > 2:
+            INFO("Read in %d Keyed groups - %s" % (len(self.Data), self.Name))
+            if verbose_flg:  print "Read in %d Keyed groups - %s" % (len(self.Data), self.Name)
 
         return True
 
@@ -525,25 +582,25 @@ class Source:
 
             if p_comment.match(line):
                 if group:
-                    group.comments.append(line)
+                    group.Comments.append(line)
                 else:
-                    self.comments.append(line)
+                    self.Comments.append(line)
 
             elif (len(line) == 0):
                 continue
 
             else:
-                group.append(line)
+                group.Data.append(line)
 
         f.close()
 
-        # INFO("Read in %d Keyed groups - %s" % (len(self.Data), self.Name))
-
-        if debug_level > 2: print "Read in %d Keyed groups - %s" % (len(self.Data), self.Name)
+        if debug_level > 2:
+            INFO("Read in %d Keyed groups - %s" % (len(self.Data), self.Name))
+            if verbose_flg:  print "Read in %d Keyed groups - %s" % (len(self.Data), self.Name)
 
         return True
 
-    #-----------------------------------------------------------------------
+     #-----------------------------------------------------------------------
 
     def init_hashed(self):
         try:
@@ -562,14 +619,14 @@ class Source:
             line = line.strip()
 
             if p_comment.match(line):
-                self.comments.append(line)
+                self.Comments.append(line)
                 continue
 
             elif (len(line) == 0):
                 continue
 
             else:
-                (tag, data) = line.split(self.tag_delimiter)
+                (tag, data) = line.split(self.TagDelimiter)
 
                 tag = tag.strip()
 
@@ -577,9 +634,9 @@ class Source:
 
         f.close()
 
-        # INFO("Read in %d hashed rows - %s" % (len(self.Data), self.Name))
-
-        if debug_level > 2: print "Read in %d hashed rows - %s" % (len(self.Data), self.Name)
+        if debug_level > 2:
+        	  INFO("Read in %d hashed rows - %s" % (len(self.Data), self.Name))
+             if verbose_flg:  print "Read in %d hashed rows - %s" % (len(self.Data), self.Name)
 
         return True
 
@@ -602,7 +659,7 @@ class Source:
             line = line.strip()
 
             if p_comment.match(line):
-                self.comments.append(line)
+                self.Comments.append(line)
                 continue
 
             elif (len(line) == 0):
@@ -613,9 +670,16 @@ class Source:
 
         f.close()
 
-        # INFO("Read in %d indexed rows - %s" % (len(self.Data), self.Name))
+        if debug_level > 2:
+            INFO("Read in %d indexed rows - %s" % (len(self.Data), self.Name))
+            if verbose_flg:  print "Read in %d indexed rows - %s" % (len(self.Data), self.Name)
 
-        if debug_level > 2: print "Read in %d indexed rows - %s" % (len(self.Data), self.Name)
+        return True
+
+    #-----------------------------------------------------------------------
+
+    def init_indexer(self):
+        self.Data = 0
 
         return True
 
@@ -638,7 +702,7 @@ class Source:
             line = line.strip()
 
             if p_comment.match(line):
-                self.comments.append(line)
+                self.Comments.append(line)
                 continue
 
             elif (len(line) == 0):
@@ -649,9 +713,54 @@ class Source:
             except:
                 no = 0
 
-            self.Data = no
+            self.Data = int(no)
 
         f.close()
+
+        return True
+
+    #-----------------------------------------------------------------------
+
+    def init_barcodes(self):
+        try:
+            f = open(self.File, 'r')
+        except IOError, e:
+            sys.stderr.write('[dserver]  Open failed: %s\n' % str(e))
+            sys.exit(1)
+
+        groupName  = None
+        group      = None
+
+        self.Data  = {}
+
+        while True:
+            line = f.readline()
+
+            if not line: break
+
+            line = line.strip()
+
+            if p_comment.match(line):
+                self.Comments.append(line)
+                continue
+
+            elif (len(line) == 0):
+                continue
+
+            else:
+                (barcode_type, serial_no)    = line.split(self.TagDelimiter)
+
+                barcode_type                 = barcode_type.strip()
+
+                barcode_specification        = BarcodeGroup(barcode_type)
+                barcode_specification.Serial = int(serial_no)
+                self.Data[barcode_type]      = barcode_specification
+
+        f.close()
+
+        if debug_level > 2:
+            INFO("Read in %d barcode groups - %s" % (len(self.Data), self.Name))
+            if verbose_flg:  print "Read in %d barcode groups - %s" % (len(self.Data), self.Name)
 
         return True
 
@@ -663,7 +772,7 @@ class Source:
 
         ts = datetime.now().strftime('%Y%m%d%H%M%S')
 
-        self.BackupCmd  = "cp %s.dat %s.%s" % (self.Name, self.Name, ts)
+        self.BackupCmd  = "cp %s/%s.dat %s/tmp/%s_%s.bak" % (self.Environment, self.Name, self.Environment, ts, self.Name)
 
         print "Flushing %s" % self.Name
 
@@ -671,16 +780,20 @@ class Source:
             self.flush_csv()
         elif self.Type == "Sequence":
             self.flush_sequence()
+        elif self.Type == "KeyedSequence":
+            self.flush_keyed_sequence()
+        elif self.Type == "Keyed":
+            self.flush_keyed()
         elif self.Type == "Hashed":
             self.flush_hashed()
         elif self.Type == "Indexed":
             self.flush_indexed()
-        elif self.Type == "Keyed":
-            self.flush_keyed()
         elif self.Type == "Indexer":
             pass  # Do nothing
         elif self.Type == "Counter":
             self.flush_counter()
+        elif self.Type == "Barcodes":
+            self.flush_barcodes()
 
     #-----------------------------------------------------------------------
 
@@ -693,10 +806,11 @@ class Source:
             sys.stderr.write('[dserver]  Open failed: %s\n' % str(e))
             return 0
 
-        for line in  self.comments:
+        for line in  self.Comments:
             f.write("%s\n" % line)
 
         l = len(self.Data)
+
         if l > 0:
             i = self.Idx
             while i < len(self.Data):
@@ -716,10 +830,33 @@ class Source:
             sys.stderr.write('[dserver]  Open failed: %s\n' % str(e))
             return 0
 
-        for line in  self.comments:
+        for line in  self.Comments:
             f.write("%s\n" % line)
 
         f.write("%d\n" % self.Data)
+
+        f.close()
+
+    #-----------------------------------------------------------------------
+
+    def flush_keyed_sequence(self):
+        os.system(self.BackupCmd)
+
+        try:
+            f = open(self.File, 'wb')
+        except IOError, e:
+            sys.stderr.write('[dserver]  Open failed: %s\n' % str(e))
+            return 0
+
+        group_keys = self.Data.keys()
+
+        group_keys.sort()
+
+        for line in  self.Comments:
+            f.write("%s\n" % line)
+
+        for key in group_keys:
+            f.write("%s%s%s\n" % (key, self.TagDelimiter, self.Data[key]))
 
         f.close()
 
@@ -738,7 +875,7 @@ class Source:
 
         group_keys.sort()
 
-        for line in  self.comments:
+        for line in  self.Comments:
             f.write("%s\n" % line)
 
         for key in group_keys:
@@ -746,7 +883,7 @@ class Source:
 
             group = self.Data[key]
 
-            for line in  group.comments:
+            for line in  group.Comments:
                 f.write("%s\n" % line)
 
             i = group.Idx
@@ -772,16 +909,43 @@ class Source:
     #-----------------------------------------------------------------------
 
     def flush_counter(self):
+        os.system(self.BackupCmd)
+
         try:
             f = open(self.File, 'wb')
         except IOError, e:
             sys.stderr.write('[dserver]  Open failed: %s\n' % str(e))
             return 0
 
-        for line in  self.comments:
+        for line in  self.Comments:
             f.write("%s\n" % line)
 
-        f.write("%d\n" % (self.Data + 1))
+        counter = self.Data + 1
+
+        f.write("%d\n" % counter)
+
+        f.close()
+
+    #-----------------------------------------------------------------------
+
+    def flush_barcodes(self):
+        os.system(self.BackupCmd)
+
+        try:
+            f = open(self.File, 'wb')
+        except IOError, e:
+            sys.stderr.write('[dserver]  Open failed: %s\n' % str(e))
+            return 0
+
+        keys = self.Data.keys()
+
+        keys.sort()
+
+        for line in  self.Comments:
+            f.write("%s\n" % line)
+
+        for key in keys:
+            f.write("%s%s%d\n" % (key, self.TagDelimiter, self.Data[key].Serial))
 
         f.close()
 
@@ -795,7 +959,7 @@ def INFO(msg):
 
 def ERROR(msg):
     if log: log.error(msg)
-    sys.stderr.write('[dserver]  %s\n' % msg)
+    if verbose_flg: print "[dserver]  %s" % msg
 
 #--------------------------------------------------------------------------
 
@@ -838,7 +1002,7 @@ def read_config():
         elif (line.find("Port=") != -1):
              definition  = line.split("=")
 
-             dserver_port = int(definition[1].strip())
+             PORT = int(definition[1].strip())
 
         elif (line.find("Environment=") != -1):
              definition  = line.split("=")
@@ -858,9 +1022,7 @@ def read_config():
              except:
                  attributes = {}
 
-             print "@@@ Attributes: %s" % attributes
-
-             source = Source(name, source_type, attributes)
+             source = Source(name, ENVIRONMENT, source_type, attributes)
 
              sources.append(source)
 
@@ -889,8 +1051,7 @@ def process(s):
     msg = s.split("|")
     l   = len(msg)
 
-    print msg
-    if debug_level > 1: INFO("[dserver::process] len %d  msg %s" % (l, msg))
+    if debug_level > 1:  INFO("[dserver::process]  len %d  msg %s" % (l, msg))
 
     ts    = datetime.now().strftime('%Y%m%d%H%M%S')
     reply = "None"
@@ -906,7 +1067,7 @@ def process(s):
     elif (msg[0] == "REG"):
         name = msg[1].replace('\n','').replace('\r','')
         idx  = get_source_index(name)
-        if debug_level > 0: INFO("[dserver::process]  REG '%s' -> %d" % (name, idx))
+        if debug_level > 0:  INFO("[dserver::process]  REG '%s' -> %d" % (name, idx))
 
         if client_language == 'Python':
             reply = "%d|%s" % (idx, marshal.dumps(sources[idx].Attributes))
@@ -916,178 +1077,323 @@ def process(s):
     elif (msg[0] == "REGK"):
         if (len(msg) != 3):
             ERROR("[dserver::process]  REGK -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
+        else:
+            reply = "*OK*"
 
     elif (msg[0] == "REGI"):
         if (len(msg) != 2):
             ERROR("[dserver::process]  REGI -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
+        else:
+            reply = "*OK*"
 
     elif (msg[0] == "GETN"):
-        if (len(msg) != 2):
-            ERROR("[dserver::process]  GETN -> Bad Message '%s'" % str(msg))
-        hdl  = int(msg[1])
+        if (len(msg) == 2):
+            hdl  = int(msg[1])
 
-        try:
-            source = sources[hdl]
-        except:
-            source = None
+            try:
+                source = sources[hdl]
+            except:
+                source = None
 
-        if source != None:
-            if source.Type == 'CSV':
-                if ((source.Idx != None) and (source.Idx < len(source.Data))):
-                    reply  = source.Data[source.Idx]
-                    source.Idx += 1
+            if source != None:
+                if source.Type == 'CSV':
+                    if ((source.Idx != None) and (source.Idx < len(source.Data))):
+                        reply  = source.Data[source.Idx]
+                        source.Idx += 1
+                    else:
+                        reply = "*Exhausted*"
+                elif source.Type in ["Sequence", "Indexer"]:
+                    reply = "%d" % source.Data
+                    source.Data += 1
+                elif source.Type == "Counter":
+                    reply = "%d" % source.Data
                 else:
-                    reply = "*Exhausted*"
-            elif source.Type in ["Sequence", "Indexer"]:
-                reply = "%d" % source.Data
-                source.Data += 1
-            elif source.Type == "Counter":
-                reply = "%d" % source.Data
+                    reply = "UNKNOWN"
             else:
-                reply = "UNKNOWN"
+                reply = "*BAD*HANDLE*"
+
+            source.ufh.write("%s - %s\n" % (ts, reply))
+            source.ufh.flush()
         else:
-            reply = "*BAD*HANDLE*"
+            ERROR("[dserver::process]  GETN -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
 
-        source.ufh.write("%s - %s\n" % (ts, reply))
+        if debug_level > 2:  INFO("[dserver::process]  GETN -> %s" % reply)
 
-        if debug_level > 2: INFO("[dserver::process]  GETN -> %s" % reply)
+    elif (msg[0] == "GETKS"):
+        if (len(msg) == 3):
+            hdl  = int(msg[1])
+            key  = msg[2]
+
+            try:
+                source = sources[hdl]
+            except:
+                source = None
+
+            if source != None:
+                if source.Data.has_key(key):
+                    reply             = "%d" % source.Data[key]
+                    source.Data[key] += 1
+                else:
+                    reply = "*NO*VALID*KEY*"
+            else:
+                reply = "*BAD*SOURCE*INDEX*"
+
+            source.ufh.write("%s - %s::%s\n" % (ts, key, reply))
+            source.ufh.flush()
+        else:
+            ERROR("[dserver::process]  GETKS -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
+
+        if debug_level > 2:  INFO("[dserver::process]  GETKS %s -> %s" % (key, reply))
 
     elif (msg[0] == "GETK"):
-        if (len(msg) != 3):
-            ERROR("[dserver::process]  GETK -> Bad Message '%s'" % str(msg))
-        hdl  = int(msg[1])
-        grp  = msg[2]
+        if (len(msg) == 3):
+            hdl  = int(msg[1])
+            grp  = msg[2]
 
-        try:
-            source = sources[hdl]
-        except:
-            source = None
-
-        if source != None:
             try:
-                g = source.Data[grp]
+                source = sources[hdl]
             except:
-                g = None
-            if g != None:
-                if (g.Idx < len(g.Data)):
-                    reply  = g.Data[g.Idx]
-                    g.Idx += 1
+                source = None
+
+            if source != None:
+                try:
+                    g = source.Data[grp]
+                except:
+                    g = None
+
+                if g != None:
+                    if (g.Idx < len(g.Data)):
+                        reply  = g.Data[g.Idx]
+                        g.Idx += 1
+                    else:
+                        reply = "*Exhausted*"
                 else:
-                    reply = "*Exhausted*"
+                    reply = "*BAD*GROUP*"
+            else:
+                reply = "*BAD*HANDLE*"
+
+            source.ufh.write("%s - %s::%s\n" % (ts, grp, reply))
+            source.ufh.flush()
         else:
-            reply = "*BAD*HANDLE*"
+            ERROR("[dserver::process]  GETK -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
 
-        source.ufh.write("%s - %s::%s\n" % (ts, grp, reply))
+        if debug_level > 2:  INFO("[dserver::process]  GETK %s -> %s" % (grp, reply))
 
-        if debug_level > 2: INFO("[dserver::process]  GETK %s -> %s" % (grp, reply))
+    elif (msg[0] == "GETKR"):  # Pick random element from keyed group
+        if (len(msg) == 3):
+            hdl  = int(msg[1])
+            grp  = msg[2]
+
+            try:
+                source = sources[hdl]
+            except:
+                source = None
+
+            if source != None:
+                try:
+                    g = source.Data[grp]
+                except:
+                    g = None
+
+                if g != None:
+                    len_data = len(g.Data)
+                    if len_data > 0:
+                        idx = random.randint(0, len_data - 1)
+                        reply  = g.Data[idx]
+                    else:
+                        reply = "*Exhausted*"
+                else:
+                    reply = "*BAD*GROUP*"
+  
+            else:
+                reply = "*BAD*HANDLE*"
+
+            source.ufh.write("%s - %s::%s\n" % (ts, grp, reply))
+            source.ufh.flush()
+        else:
+            ERROR("[dserver::process]  GETK -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
+
+        if debug_level > 2:  INFO("[dserver::process]  GETK %s -> %s" % (grp, reply))
 
     elif (msg[0] == "GETH"):
-        if (len(msg) != 3):
-            ERROR("[dserver::process]  GETH -> Bad Message", msg)
-        hdl  = int(msg[1])
-        key  = msg[2]
+        if (len(msg) == 3):
+            hdl  = int(msg[1])
+            key  = msg[2]
 
-        try:
-            source = sources[hdl]
-        except:
-            source = None
-
-        if source != None:
             try:
-                reply = source.Data[key]
+                source = sources[hdl]
             except:
-                reply = "*UNDEFINED*HASH*"
+                source = None
+
+            if source != None:
+                try:
+                    reply = source.Data[key]
+                except:
+                    reply = "*UNDEFINED*HASH*"
+            else:
+                reply = "*BAD*HANDLE*"
+
+            source.ufh.write("%s - %s::%s\n" % (ts, key, reply))
+            source.ufh.flush()
         else:
-            reply = "*BAD*HANDLE*"
+            ERROR("[dserver::process]  GETH -> Bad Message", msg)
+            return "*BAD*MESSAGE*"
 
-        source.ufh.write("%s - %s::%s\n" % (ts, key, reply))
-
-        if debug_level > 2: INFO("[dserver::process]  GETH %s -> %s" % (key, reply))
+        if debug_level > 2:  INFO("[dserver::process]  GETH %s -> %s" % (key, reply))
 
     elif (msg[0] == "GETI"):
-        if (len(msg) != 3):
-            ERROR("[dserver::process]  GETI -> Bad Message '%s'" % str(msg))
-        hdl    = int(msg[1])
-        try:
-            idx = int(msg[2])
-        except:
-            idx = None
-            ERROR("[dserver::process]  GETI -> Non integer index - [%s]" % msg[2])
+        if (len(msg) == 3):
+            hdl    = int(msg[1])
 
-        try:
-            source = sources[hdl]
-        except:
-            source = None
+            try:
+                idx = int(msg[2])
+            except:
+                idx = None
+                ERROR("[dserver::process]  GETI -> Non integer index - [%s]" % msg[2])
 
-        if source != None:
-            if idx >= 0:
-                try:
-                    reply = source.Data[idx]
-                except:
-                    reply = "*OUT*OF*RANGE*"
+            try:
+                source = sources[hdl]
+            except:
+                source = None
+
+            if source != None:
+                if idx >= 0:
+                    try:
+                        reply = source.Data[idx]
+                    except:
+                        reply = "*OUT*OF*RANGE*"
+                else:
+                    reply = "*INVALID*INDEX*"
             else:
-                reply = "*INVALID*INDEX*"
+                reply = "*BAD*HANDLE*"
+
+            source.ufh.write("%s - %s::%s\n" % (ts, idx, reply))
+            source.ufh.flush()
         else:
-            reply = "*BAD*HANDLE*"
+            ERROR("[dserver::process]  GETI -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
 
-        source.ufh.write("%s - %s::%s\n" % (ts, idx, reply))
+        if debug_level > 2:  INFO("[dserver::process]  GETI %s -> %s" % (idx, reply))
 
-        if debug_level > 2: INFO("[dserver::process]  GETI %s -> %s" % (idx, reply))
+    elif (msg[0] == "GETB"):
+        if (len(msg) == 3):
+            hdl         = int(msg[1])
+            barcode_key = msg[2]
+
+            try:
+                source = sources[hdl]
+            except:
+                source = None
+
+            if source != None:
+                if source.Data.has_key(barcode_key):
+                    barcode = source.Data[barcode_key]
+
+                    no    = (int(barcode.Range) * 1000000) + barcode.Serial
+
+                    bytes = list("%08d" % no)
+
+                    sum   = 0
+
+                    for idx in range(len(barcode_factors)):
+                        sum += barcode_factors[idx] * int(bytes[idx])
+
+                    chksum = sum % 11
+
+                    print no, chksum
+
+                    if chksum == 0:
+                        chksum = 5
+                    elif chksum == 1:
+                        chksum = 0
+                    else:
+                        chksum = 11 - chksum
+
+                    reply = '%s%08d%d%s' % (barcode.Prefix, no, chksum, barcode.Country)
+
+                    barcode.Serial += 1
+                else:
+                    reply = "*NO*VALID*KEY*"
+            else:
+                reply = "*BAD*SOURCE*INDEX*"
+
+            source.ufh.write("%s - %s::%s\n" % (ts, barcode_key, reply))
+            source.ufh.flush()
+        else:
+            ERROR("[dserver::process]  GETB -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
+
+        if debug_level > 2:  INFO("[dserver::process]  GETB %s -> %s" % (barcode_key, reply))
 
     elif (msg[0] == "STOC"):
-        if (len(msg) != 3):
-            ERROR("[dserver::process]  STOC -> Bad Message '%s'" % str(msg))
-        hdl   = int(msg[1])
-        data  = msg[2]
-        reply = "0"
+        if (len(msg) == 3):
+            hdl   = int(msg[1])
+            data  = msg[2]
+            reply = "0"
 
-        try:
-            source = sources[hdl]
-        except:
-            source = None
+            try:
+                source = sources[hdl]
+            except:
+                source = None
 
-        if source != None:
-            source.Data.append(data)
-            if source.Idx == None:
-                source.Idx = 0
-            source.sfh.write("%s - %s\n" % (ts, data))
-            source.sfh.flush()
-            if debug_level > 1: INFO("STOC %s" % data)
-            reply = "1"
+            if source != None:
+                source.Data.append(data)
+
+                if source.Idx == None:
+                    source.Idx = 0
+
+                source.sfh.write("%s - %s\n" % (ts, data))
+                source.sfh.flush()
+
+                if debug_level > 1:  INFO("STOC %s" % data)
+
+                reply = "1"
+            else:
+                reply = "*BAD*HANDLE*"
         else:
-            reply = "*BAD*HANDLE*"
+            ERROR("[dserver::process]  STOC -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
 
-        if debug_level > 2: INFO("[dserver::process]  STOC %s -> %s" % (data, reply))
+        if debug_level > 2:  INFO("[dserver::process]  STOC %s -> %s" % (data, reply))
 
     elif (msg[0] == "STOK"):
-        if (len(msg) != 4):
-            ERROR("[dserver::process]  STOK -> Bad Message '%s'" % str(msg))
-        hdl  = int(msg[1])
-        grp  = msg[2]
-        data = msg[3]
+        if (len(msg) == 4):
+            hdl  = int(msg[1])
+            grp  = msg[2]
+            data = msg[3]
 
-        reply = "0"
+            reply = "0"
 
-        try:
-            source = sources[hdl]
-        except:
-            source = None
+            try:
+                source = sources[hdl]
+            except:
+                source = None
 
-        if source != None:
-            if source.Data.has_key(grp):
-                g                = source.Data[grp]
+            if source != None:
+                if source.Data.has_key(grp):
+                    g                = source.Data[grp]
+                else:  # Add a new group!
+                    g                = Group(grp)
+                    source.Data[grp] = g
+                if g != None:
+                    g.Data.append(data)
+                    if debug_level > 1:  INFO("STOK %s %s" % (grp, data))
+                    source.sfh.write("%s - %s::%s\n" % (ts, grp, data))
+                    source.sfh.flush()
+                reply = "1"
             else:
-                g                = Group(grp)
-                source.Data[grp] = g
-            if g != None:
-                g.Data.append(data)
-                if debug_level > 1: INFO("STOK %s %s" % (grp, data))
-                source.sfh.write("%s - %s::%s\n" % (ts, grp, data))
-            reply = "1"
+                reply = "*BAD*HANDLE*"
         else:
-            reply = "*BAD*HANDLE*"
+            ERROR("[dserver::process]  STOK -> Bad Message '%s'" % str(msg))
+            reply = "*BAD*MESSAGE*"
 
-        if debug_level > 2: INFO("[dserver::process]  STOK %s %s -> %s" % (grp, data, reply))
+        if debug_level > 2:  INFO("[dserver::process]  STOK %s %s -> %s" % (grp, data, reply))
 
     return reply
 
@@ -1115,6 +1421,9 @@ def shutdown():
     except IOError, e:
         ERROR('Unlink failed: %s' % str(e))
         sys.exit(1)
+    except OSError, e:
+        ERROR('Unlink failed: %s' % str(e))
+        sys.exit(1)
 
     sys.exit(0)
 
@@ -1129,7 +1438,6 @@ def check_running():
     except:
         ERROR("Unexpected error: %s" % sys.exc_info()[0])
         raise
-
 
     if pfp:
         line = pfp.readline()
@@ -1242,7 +1550,7 @@ def init_server():
     if (not silent_flg):
         INFO("Server PID is %d" % pid)
 
-    print "[dshttpd]  Listening on port %s - Data from %s" % (PORT, os.getcwd())
+    print "[dshttpd]  Listening on port %s - Data from %s/%s" % (PORT, os.getcwd(), ENVIRONMENT)
 
     try:
         httpd = HTTPServer((HOST, PORT), RequestHandler)
@@ -1400,9 +1708,11 @@ if __name__ == '__main__' or __name__ == sys.argv[0]:
 Revision History:
 
       Date     Who   Description
-    --------   ---   ----------------------------------------------------
+    --------   ---   -----------------------------------------------------
     20070419   plh   Initial implementation
     20100714   plh   Added Counter type
+    20110630   plh   Added KeyedSequence type
+    20110630   plh   Added Barcode type
 
 Problems to fix:
 
