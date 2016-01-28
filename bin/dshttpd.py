@@ -72,6 +72,9 @@ import signal
 import thread
 import marshal
 import logging
+import socket
+import threading
+import SocketServer
 
 #--------------------------------------------------------------------------
 
@@ -80,7 +83,7 @@ from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
 #--------------------------------------------------------------------------
 
-__id__            = "@(#)  dshttpd.py  [2.2.0]  2011-06-30"
+__id__            = "@(#)  dshttpd.py  [2.3.1]  2011-07-25"
 __version__       = re.search(r'.*\[([^\]]*)\].*', __id__).group(1)
 __all__           = ["RequestHandler"]
 
@@ -113,6 +116,11 @@ p_comment         = re.compile('^#')
 p_args            = re.compile(r'([^\?]*)\?(.*)')
 
 barcode_factors   = (8, 6, 4, 2, 3, 5, 9, 7)
+
+#==========================================================================
+
+class MultiThreadedHTTPServer(SocketServer.ThreadingMixIn, HTTPServer):
+    pass
 
 #==========================================================================
 
@@ -1553,7 +1561,7 @@ def init_server():
     print "[dshttpd]  Listening on port %s - Data from %s/%s" % (PORT, os.getcwd(), ENVIRONMENT)
 
     try:
-        httpd = HTTPServer((HOST, PORT), RequestHandler)
+        httpd = MultiThreadedHTTPServer((HOST, PORT), RequestHandler)
         httpd.serve_forever()
     except KeyboardInterrupt:
         print '^C received, shutting down server'
@@ -1713,6 +1721,7 @@ Revision History:
     20100714   plh   Added Counter type
     20110630   plh   Added KeyedSequence type
     20110630   plh   Added Barcode type
+    20110801   plh   Updated to use Threaded HTTPD class
 
 Problems to fix:
 
